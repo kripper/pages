@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenHands V1 Gateway Architecture</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true,theme:"default"});</script>
+<style>
+:root{--p:#0066cc;--pl:#e8f0fe;--tx:#1a1a2e;--mu:#5a6377;--bd:#e2e8f0;--cd:#f8fafc;--cb:#f1f5f9;--g:#059669;--o:#d97706;--r:#dc2626;--u:#7c3aed}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;color:var(--tx);line-height:1.7}
+.W{max-width:960px;margin:0 auto;padding:2rem 1.5rem 4rem}
+h1{font-size:2rem;margin-bottom:.25rem}
+h2{font-size:1.4rem;margin:2.5rem 0 1rem;padding-bottom:.5rem;border-bottom:2px solid var(--bd)}
+h3{font-size:1.1rem;margin:1.5rem 0 .5rem}
+p,li{margin-bottom:.6rem}
+.S{color:var(--mu);font-size:1.05rem;margin-bottom:2rem}
+.C{background:var(--cd);border:1px solid var(--bd);border-radius:10px;padding:1.5rem;margin:1.5rem 0}
+.T{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem}
+@media(max-width:700px){.T{grid-template-columns:1fr}}
+.D{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:1.25rem;margin:1.5rem 0;text-align:center;overflow-x:auto}
+code{background:var(--cb);padding:.15em .4em;border-radius:4px;font-size:.88em;font-family:SF Mono,Fira Code,Consolas,monospace}
+pre{background:var(--cb);padding:1rem;border-radius:8px;overflow-x:auto;margin:1rem 0}
+pre code{background:none}
+.B{display:inline-block;padding:.2em .6em;border-radius:999px;font-size:.78em;font-weight:600;vertical-align:middle}
+.G{background:#d1fae5;color:var(--g)}.O{background:#fef3c7;color:var(--o)}.U{background:#ede9fe;color:var(--u)}
+table{width:100%%;border-collapse:collapse;margin:1rem 0;font-size:.95rem}
+th,td{padding:.55rem .8rem;text-align:left;border-bottom:1px solid var(--bd)}
+th{background:var(--cd);font-weight:600;font-size:.9rem}
+.P{display:flex;gap:1rem;flex-wrap:wrap;margin:1.25rem 0}
+.K{display:flex;align-items:center;gap:.5rem;padding:.7rem 1.1rem;background:var(--cd);border:1px solid var(--bd);border-radius:8px;text-decoration:none;color:var(--p);font-weight:500;font-size:.95rem}
+.K:hover{border-color:var(--p)}
+ft{display:block;margin-top:3rem;padding-top:1rem;border-top:1px solid var(--bd);color:var(--mu);font-size:.82rem}
+ul{padding-left:1.5rem}
+.N{border-left:3px solid var(--o);padding:.75rem 1rem;background:#fffbeb;border-radius:0 8px 8px 0;margin:1rem 0;font-size:.95rem}
+.NB{border-left-color:var(--p);background:var(--pl)}
+.NG{border-left-color:var(--g);background:#d1fae5}
+</style></head><body><div class="W">
+<h1>OpenHands V1 Gateway Architecture</h1>
+<p class="S">How Agent Canvas connects to self-hosted OpenHands through the app-server proxy</p>
+<div class="P">
+<a class="K" href="https://github.com/OpenHands/OpenHands/pull/14909" target="_blank">OpenHands#14909 - Backend (V1 Gateway)</a>
+<a class="K" href="https://github.com/OpenHands/agent-canvas/pull/1435" target="_blank">agent-canvas#1435 - Frontend</a>
+</div>
+<h2>Overview</h2>
+<p>The V1 Gateway enables <strong>Agent Canvas</strong> (the web UI) to connect to self-hosted OpenHands through the <strong>app-server</strong> as a single unified endpoint. Instead of the browser connecting directly to sandbox agent-servers (which may not be reachable), all traffic flows through the app-server, which acts as a transparent proxy.</p>
+<div class="N NB"><strong>Two PRs, one feature:</strong> OpenHands#14909 adds the gateway backend; agent-canvas#1435 makes the UI gateway-aware. Both must be deployed together.</div>
+
+
+<h2>System Components</h2>
+<div class="D">
+<pre class="mermaid">graph TB
+    subgraph Br["Browser - Agent Canvas UI"]
+        WS["WebSocket Client"]
+        RC["REST Client"]
+    end
+    subgraph AS["OpenHands App-Server (V1 Gateway)"]
+        CR["conversation_router.py"]
+        WR["websocket_router.py"]
+        ER["event_router.py"]
+        GR["git_router.py"]
+        OA["OAuth Device Flow"]
+    end
+    subgraph Sb["Sandbox Container"]
+        AG["agent-server (SDK)"]
+        AI["AI Agent"]
+    end
+    LM[("LLM Provider")]
+    WS --> |"WS /ws/events/{id}"| WR
+    RC --> |"REST /api/conversations"| CR
+    RC --> |"OAuth"| OA
+    WR --> |"WebSocket proxy"| AG
+    CR --> |"HTTP proxy"| AG
+    ER --> |"fallback proxy"| AG
+    GR --> |"proxy"| AG
+    AG --> AI
+    AI --> LM
+</pre>
+</div>
+<h2>Request Flow: Direct vs. Gateway</h2>
+<div class="T">
+<div class="C">
+<h3>Direct Mode (default)</h3>
+<div class="D"><pre class="mermaid">graph LR
+    B["Browser"] --> |"REST + WS"| S["agent-server in Sandbox"]
+</pre></div>
+<p>Browser connects directly to the sandbox agent-server using the <code>conversation_url</code> returned by the backend.</p>
+</div>
+<div class="C">
+<h3>Gateway Mode <span class="B G">self-hosted</span></h3>
+<div class="D"><pre class="mermaid">graph LR
+    B["Browser"] --> |"All traffic"| G["App-Server Gateway"]
+    G --> |"Proxied"| S["agent-server in Sandbox"]
+</pre></div>
+<p>Browser connects only to the app-server. The gateway proxies both WebSocket and REST to the sandbox. Enabled by <code>ENABLE_WEBSOCKET_GATEWAY=true</code>.</p>
+</div>
+</div>
+
+
+<h2>WebSocket Connection Flow</h2>
+<div class="D"><pre class="mermaid">sequenceDiagram
+    participant B as Browser
+    participant A as App-Server
+    participant S as Sandbox agent-server
+    Note over B,S: Gateway Mode
+    B->>A: REST GET /api/conversations/id
+    A-->>B: Response with websocket_url set
+    B->>B: buildWebSocketUrl resolves relative URL
+    B->>A: WS connect to /ws/events/id
+    A->>S: WS connect to sandbox agent-server
+    A<->>S: WebSocket proxy bridge
+    B<->>A: Real-time events
+</pre></div>
+
+
+<h2>askAgent Routing Decision</h2>
+<div class="D"><pre class="mermaid">flowchart TD
+    Start[askAgent called] --> Fetch[Fetch conversation data]
+    Fetch --> Check{websocket_url present?}
+    Check -->|Yes| GW[Route through App-Server POST /api/conversations/id/ask_agent]
+    Check -->|No| DX[Direct call to agent-server sandbox]
+    GW --> End[Response returned]
+    DX --> End
+</pre></div>
+<div class="N"><strong>Key insight:</strong> <code>shouldUseGateway()</code> simply checks whether <code>websocket_url</code> exists on the AppConversation. When present, all HTTP and WebSocket traffic is routed through the app-server proxy instead of connecting directly to the sandbox.</div>
+
+
+<h2>Activation Flow</h2>
+<div class="D"><pre class="mermaid">sequenceDiagram
+    participant U as User
+    participant FC as Frontend (Agent Canvas)
+    participant AS as OpenHands App-Server
+    participant DS as Device Server (OAuth)
+    participant SB as Sandbox agent-server
+    U->>FC: Add backend (e.g. https://my-oh.example.com)
+    FC->>AS: GET /api/conversations (probe)
+    AS-->>FC: 200 OK, inferKind=app_server
+    FC->>DS: POST /oauth/device/authorize
+    DS-->>FC: device_code, user_code, verification_uri
+    FC->>U: Open verification popup
+    U->>DS: Enter user_code in popup
+    FC->>DS: POST /oauth/device/token (poll)
+    DS-->>FC: access_token
+    FC->>AS: GET /api/conversations (authed)
+    AS-->>FC: List with websocket_url field
+    FC->>FC: shouldUseGateway() => true
+    FC->>AS: WS /ws/events/id + REST proxy
+    AS->>SB: Forward to sandbox
+</pre></div>
+
+
+<h2>Backend Components (OpenHands#14909)</h2>
+<table>
+<tr><th>Module</th><th>Routes</th><th>Purpose</th></tr>
+<tr><td><code>conversation_router.py</code></td><td><code>POST /api/conversations/{id}/pause</code><br/><code>POST /{id}/resume</code><br/><code>POST /{id}/ask_agent</code> (600s timeout)<br/><code>GET /{id}/events/count</code></td><td>Proxy conversation lifecycle commands to sandbox agent-server</td></tr>
+<tr><td><code>websocket_router.py</code></td><td><code>WS /ws/events/{id}</code></td><td>WebSocket gateway bridging browser to sandbox agent-server. Forwards all query params (resend_mode, after_timestamp, session_api_key)</td></tr>
+<tr><td><code>event_router.py</code></td><td><code>GET /api/conversations/{id}/events/search</code><br/><code>GET /{id}/events/count</code></td><td>Event search with fallback: if local store is empty, proxies to agent-server</td></tr>
+<tr><td><code>git_router.py</code></td><td><code>GET /api/v1/git/changes</code><br/><code>GET /api/v1/git/diff</code></td><td>Git operations proxy to sandbox</td></tr>
+<tr><td><code>oauth_router.py</code></td><td><code>POST /oauth/device/authorize</code><br/><code>POST /oauth/device/token</code><br/><code>POST /oauth/device/verify-authenticated</code><br/><code>GET /oauth/device/verify</code></td><td>OAuth 2.0 Device Flow (RFC 8628) for authentication</td></tr>
+</table>
+<p>Enabled by: <code>ENABLE_WEBSOCKET_GATEWAY=true</code> environment variable on the app-server.</p>
+<h2>Frontend Changes (agent-canvas#1435)</h2><table><tr><th>File</th><th>Change</th></tr><tr><td><code>agent-server-conversation-service.types.ts</code></td><td>Added <code>websocket_url</code> field to <code>AppConversation</code> type</td></tr><tr><td><code>device-flow-auth.tsx</code></td><td>Allow <code>http:</code> protocol (not just <code>https:</code>) for self-hosted device flow verification</td></tr><tr><td><code>conversation-websocket-context.tsx</code></td><td>Accepts <code>gatewayWebsocketUrl</code> prop, passes it to <code>buildWebSocketUrl()</code> along with backend host</td></tr><tr><td><code>websocket-provider-wrapper.tsx</code></td><td>Passes <code>conversation.websocket_url</code> as <code>gatewayWebsocketUrl</code> to the provider</td></tr><tr><td><code>conversation-mutation-utils.ts</code></td><td>Routes <code>askAgent</code> through gateway when <code>websocket_url</code> is present (via <code>shouldUseGateway()</code> check)</td></tr><tr><td><code>websocket-url.ts</code></td><td>New <code>shouldUseGateway()</code> helper; updated <code>buildWebSocketUrl()</code> to resolve relative websocket URLs against backend origin</td></tr></table><p>Total: 6 files changed, +80 lines, -5 lines.</p>
+
+<h2>Cloud Proxy Compatibility</h2>
+<div class="C">
+<h3>The cloud_proxy router was removed from SDK v1.29.0</h3>
+<p><a href="https://github.com/OpenHands/software-agent-sdk/pull/3326" target="_blank">software-agent-sdk#3326</a> by @hieptl removed the agent-server <code>POST /api/cloud-proxy</code> route.</p>
+<p><strong>Why this PR is NOT blocked:</strong></p>
+<ul>
+<li><code>callCloudProxy()</code> only posts to the local/bundled agent-server <code>/api/cloud-proxy</code> when <code>hostOverride</code> or <code>forceProxy</code> is set</li>
+<li>The <code>askAgent</code> call in this PR sets <strong>neither</strong> -- it is a direct browser request to <code>${activeBackend.host}/api/conversations/{id}/ask_agent</code></li>
+<li>OpenHands#14909 implements <code>POST /{id}/ask_agent</code> on the app-server side as a proxy with 600s timeout</li>
+<li>The <code>websocket_url</code> path is also independent of SDK <code>/api/cloud-proxy</code>: #14909 returns a relative <code>/ws/events/{id}</code> when <code>ENABLE_WEBSOCKET_GATEWAY</code> is enabled, and this PR resolves that against the active backend host</li>
+</ul>
+<div class="N"><strong>Important caveat:</strong> Other pre-existing Agent Canvas cloud/runtime paths still use <code>callCloudProxy(... hostOverride: ...)</code>, which <em>does</em> require the local/bundled agent-server <code>/api/cloud-proxy</code> route. Those would need a separate migration before we can safely bump Agent Canvas bundled agent-server to v1.29.0+.</div>
+<p>Current pin: <code>openhands-agent-server==1.22.1</code> / <code>openhands-sdk==1.22.1</code></p>
+</div>
+
+
+<h2>How to Enable</h2>
+<div class="C">
+<h3>On the OpenHands Backend</h3>
+<p>Set <code>ENABLE_WEBSOCKET_GATEWAY=true</code> on the app-server.</p>
+<p>Optionally, if sandboxes are not reachable by the app-server by default:
+<code>SANDBOX_CONTAINER_URL_PATTERN="http://127.0.0.1:{port}"</code></p>
+</div>
+<div class="C">
+<h3>On Agent Canvas</h3>
+<p>Add your self-hosted OpenHands instance as a backend. The UI auto-detects the gateway mode via <code>websocket_url</code> in the conversation response.</p>
+<p>Set <code>VITE_ENABLE_WEBSOCKET_GATEWAY="true"</code> in <code>frontend/.env</code> and rebuild if using the bundled frontend.</p>
+</div>
+
+
+<ft>
+<p>Architecture documentation for <a href="https://github.com/OpenHands/OpenHands/pull/14909" style="color:var(--p)">OpenHands#14909</a> (backend) and <a href="https://github.com/OpenHands/agent-canvas/pull/1435" style="color:var(--p)">agent-canvas#1435</a> (frontend).</p>
+</ft>
+</div>
+</body>
+</html>
