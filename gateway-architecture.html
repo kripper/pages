@@ -101,14 +101,16 @@ ul{padding-left:1.5rem}
     participant B as Browser
     participant A as App-Server
     participant S as Sandbox agent-server
-    Note over B,S: Gateway Mode
-    B->>A: REST GET /api/conversations/id
+    Note over B S: Gateway Mode
+    B->>A: REST GET /api/conversations/{id}
     A-->>B: Response with websocket_url set
     B->>B: buildWebSocketUrl resolves relative URL
-    B->>A: WS connect to /ws/events/id
+    B->>A: WS connect to /ws/events/{id}
     A->>S: WS connect to sandbox agent-server
-    A<->>S: WebSocket proxy bridge
-    B<->>A: Real-time events
+    A->>S: WebSocket proxy bridge
+    S-->>A: WebSocket proxy bridge
+    B->>A: Real-time events
+    A-->>B: Real-time events
 </pre></div>
 
 
